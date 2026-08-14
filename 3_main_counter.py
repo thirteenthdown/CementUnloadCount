@@ -6,6 +6,7 @@ import supervision as sv
 from supervision.geometry.core import Point
 from ultralytics import YOLO
 import argparse
+import json
 
 # ──────────────────────────────────────────────
 # CONFIGURATION
@@ -19,14 +20,14 @@ VIDEO_OUT = f"output/result_{os.path.basename(VIDEO_IN)}"
 MODEL_PATH = "best.pt" if os.path.exists("best.pt") else ("runs/detect/train/weights/best.pt" if os.path.exists("runs/detect/train/weights/best.pt") else "yolo11n.pt")
 TARGET_COUNT = 36
 
+# Generate a config file path based on the video name
+CONFIG_PATH = f"{os.path.splitext(VIDEO_IN)[0]}_config.json"
+
 if not os.path.exists(VIDEO_IN):
     sys.exit(f"ERROR: Video file not found: {VIDEO_IN}")
 if not os.path.exists(MODEL_PATH):
     sys.exit(f"ERROR: Model file not found: {MODEL_PATH}")
 
-# ================================================================
-# INITIALIZATION
-# ================================================================
 print("Loading YOLO model...")
 model = YOLO(MODEL_PATH)
 
@@ -34,91 +35,90 @@ cap = cv2.VideoCapture(VIDEO_IN)
 fps = int(cap.get(cv2.CAP_PROP_FPS))
 W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
 print(f"Video Resolution: {W}x{H} @ {fps}fps")
 
-# ================================================================
-# PHASE 1 — QUALITY GATEKEEPER
-# ================================================================
-print("\n[PHASE 1] Quality Gatekeeper — checking video clarity...")
-ret, frame = cap.read()
-if not ret:
-    sys.exit("ERROR: Could not read first frame.")
+ret, first_frame = cap.read()
+if not ret: sys.exit("ERROR: Could not read first frame.")
 
-gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-print(f"  Blur score: {laplacian_var:.2f}")
+# ================================================================
+# PHASE 1 — INTERACTIVE UI (OR LOAD CONFIG)
+# ================================================================
+line_pts = []
 
-if laplacian_var < 100:
-    print("  ⚠ WARNING: Video is blurry. Results may be poor.")
+if os.path.exists(CONFIG_PATH):
+    print(f"\n[PHASE 1] Loading saved line configuration from {CONFIG_PATH}...")
+    with open(CONFIG_PATH, 'r') as f:
+        line_pts = json.load(f)
 else:
-    print("  ✓ Video quality is acceptable.\n")
-
-# ================================================================
-# PHASE 2 — AUTO CALIBRATION (DYNAMIC CORRIDOR DETECTION)
-# ================================================================
-print("\n[PHASE 2] Auto-Calibration — analyzing motion path...")
-cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-track_points = {}
-calib_frames = min(int(fps * 3), total_frames) # Use first 3 seconds
-
-for i in range(calib_frames):
-    ret, frame = cap.read()
-    if not ret: break
+    print("\n[PHASE 1] Interactive Line Calibration...")
+    print("  -> A window will open. CLICK TWICE to draw a line across the corridor.")
+    print("  -> Press ENTER to confirm and save.")
     
-    # Conf=0.1 to aggressively track bags/workers during calibration
-    results = model.track(frame, persist=True, tracker="bytetrack.yaml", device="mps", verbose=False, classes=[0], conf=0.1)[0]
-    if results.boxes is not None and results.boxes.id is not None:
-        for box, tid in zip(results.boxes.xyxy, results.boxes.id):
-            tid = int(tid)
-            cx, cy = float((box[0] + box[2]) / 2), float(box[3].item())
-            if tid not in track_points: track_points[tid] = []
-            track_points[tid].append((cx, cy))
+    clone = first_frame.copy()
+    
+    def draw_line(event, x, y, flags, param):
+        global line_pts
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if len(line_pts) < 2:
+                line_pts.append((x, y))
+                cv2.circle(clone, (x, y), 5, (0, 255, 255), -1)
+                if len(line_pts) == 2:
+                    cv2.line(clone, line_pts[0], line_pts[1], (0, 255, 0), 2)
+                cv2.imshow("Calibration", clone)
 
-valid_vectors = []
-all_points = []
-for tid, pts in track_points.items():
-    if len(pts) > 5:
-        p1, p2 = np.array(pts[0]), np.array(pts[-1])
-        dist = np.linalg.norm(p2 - p1)
-        if dist > 20: # Must have moved to be considered a path
-            valid_vectors.append((p2 - p1) / dist)
-            all_points.extend(pts)
+    cv2.imshow("Calibration", clone)
+    cv2.setMouseCallback("Calibration", draw_line)
+    
+    while True:
+        key = cv2.waitKey(1) & 0xFF
+        if key == 13: # ENTER key
+            if len(line_pts) == 2:
+                break
+            else:
+                print("  ⚠ Please click twice to draw the line first!")
+    cv2.destroyAllWindows()
+    
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump(line_pts, f)
+    print(f"  ✓ Line saved to {CONFIG_PATH}")
 
-if not valid_vectors:
-    print("  ⚠ Auto-calibration failed (no motion detected). Using default lines.")
-    V = np.array([0.0, 1.0]) # Default straight down
-    C = np.array([W / 2, H / 2])
-else:
-    avg_vec = np.mean(valid_vectors, axis=0)
-    V = avg_vec / np.linalg.norm(avg_vec)
-    C = np.mean(all_points, axis=0)
-    print(f"  ✓ Path vector: [{V[0]:.2f}, {V[1]:.2f}], Centroid: ({int(C[0])}, {int(C[1])})")
+# Calculate geometry from the user-drawn line
+A = np.array(line_pts[0], dtype=float)
+B = np.array(line_pts[1], dtype=float)
 
-# Calculate perpendicular line points for drawing
-prog_gap = max(10, int(W * 0.02)) # Scale gap to video resolution
-prog_red = -prog_gap # Pixels before centroid
-prog_blue = prog_gap # Pixels after centroid
-U = np.array([-V[1], V[0]]) # Perpendicular vector
-line_width = max(300, int(W * 0.3)) # Scale line width too
+# Vector along the drawn line
+u = (B - A)
+u = u / np.linalg.norm(u)
 
-C_red = C + prog_red * V
-red_pt1 = (int(C_red[0] - line_width * U[0]), int(C_red[1] - line_width * U[1]))
-red_pt2 = (int(C_red[0] + line_width * U[0]), int(C_red[1] + line_width * U[1]))
+# Perpendicular vector (the motion path)
+v = np.array([-u[1], u[0]])
 
-C_blue = C + prog_blue * V
-blue_pt1 = (int(C_blue[0] - line_width * U[0]), int(C_blue[1] - line_width * U[1]))
-blue_pt2 = (int(C_blue[0] + line_width * U[0]), int(C_blue[1] + line_width * U[1]))
+# Offset thresholds for Red and Blue lines (dynamic based on resolution)
+gap = max(10, int(W * 0.02))
+prog_red = -gap
+prog_blue = gap
 
-# Create supervision line zones purely for visual highlighting
+# Points for drawing the dual lines
+# Red line: Shift A and B backwards along v
+red_A = A + prog_red * v
+red_B = B + prog_red * v
+# Blue line: Shift A and B forwards along v
+blue_A = A + prog_blue * v
+blue_B = B + prog_blue * v
+
+red_pt1 = (int(red_A[0]), int(red_A[1]))
+red_pt2 = (int(red_B[0]), int(red_B[1]))
+blue_pt1 = (int(blue_A[0]), int(blue_A[1]))
+blue_pt2 = (int(blue_B[0]), int(blue_B[1]))
+
+# Create supervision line zones (for visual effects only)
 red_zone = sv.LineZone(start=Point(x=red_pt1[0], y=red_pt1[1]), end=Point(x=red_pt2[0], y=red_pt2[1]))
 blue_zone = sv.LineZone(start=Point(x=blue_pt1[0], y=blue_pt1[1]), end=Point(x=blue_pt2[0], y=blue_pt2[1]))
 
 # ================================================================
-# PHASE 3 — COUNTING & UI OVERLAY
+# PHASE 2 — COUNTING & UI OVERLAY
 # ================================================================
-print("\n[PHASE 3] Counting & UI Overlay — processing full video...")
+print("\n[PHASE 2] Counting & UI Overlay — processing full video...")
 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 os.makedirs("output", exist_ok=True)
 writer = cv2.VideoWriter(VIDEO_OUT, cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H))
@@ -134,7 +134,6 @@ while cap.isOpened():
     if not ret: break
     frame_num += 1
 
-    # Use conf=0.1 to hold onto tracks longer during occlusions
     results = model.track(frame, persist=True, tracker="bytetrack.yaml", device="mps", verbose=False, classes=[0], conf=0.1)[0]
     detections = sv.Detections.from_ultralytics(results)
 
@@ -148,24 +147,34 @@ while cap.isOpened():
         for box, tid in zip(detections.xyxy, detections.tracker_id):
             tid = int(tid)
             cx, cy = float((box[0] + box[2]) / 2), float(box[3].item())
+            P = np.array([cx, cy])
             
-            # Projection along the motion path vector V relative to Centroid C
-            prog = (cx - C[0]) * V[0] + (cy - C[1]) * V[1]
+            # Project point P onto the motion vector v relative to point A
+            prog = np.dot(P - A, v)
 
+            # State Machine: Tracks progress along the v vector
             if tid not in track_state:
                 if prog < prog_red:
                     track_state[tid] = 'before_red'
+                elif prog > prog_blue:
+                    track_state[tid] = 'past_blue'
                 else:
-                    track_state[tid] = 'past_red'
+                    track_state[tid] = 'middle'
 
+            # Forward Direction
             if track_state[tid] == 'before_red' and prog > prog_red:
                 track_state[tid] = 'crossed_red'
-
             if track_state[tid] == 'crossed_red' and prog > prog_blue:
                 track_state[tid] = 'counted'
                 counted_ids.add(tid)
 
-        # Trigger for visual effects only
+            # Reverse Direction
+            if track_state[tid] == 'past_blue' and prog < prog_blue:
+                track_state[tid] = 'crossed_blue'
+            if track_state[tid] == 'crossed_blue' and prog < prog_red:
+                track_state[tid] = 'counted'
+                counted_ids.add(tid)
+
         red_zone.trigger(detections)
         blue_zone.trigger(detections)
 
@@ -185,7 +194,7 @@ while cap.isOpened():
     counted_now = len(counted_ids)
     remaining = max(0, TARGET_COUNT - counted_now)
 
-    box_w, box_h, box_y, gap = 85, 55, 10, 8
+    box_w, box_h, box_y, gap_ui = 85, 55, 10, 8
     font = cv2.FONT_HERSHEY_SIMPLEX
 
     # TARGET Box
@@ -195,14 +204,14 @@ while cap.isOpened():
     cv2.putText(frame, str(TARGET_COUNT), (30, box_y + 45), font, 0.80, (255, 255, 255), 2, cv2.LINE_AA)
 
     # COUNTED Box
-    x2 = 10 + box_w + gap
+    x2 = 10 + box_w + gap_ui
     cv2.rectangle(frame, (x2, box_y), (x2 + box_w, box_y + box_h), (50, 50, 50), -1)
     cv2.rectangle(frame, (x2, box_y), (x2 + box_w, box_y + box_h), (100, 100, 100), 1)
     cv2.putText(frame, "COUNTED", (x2 + 5, box_y + 18), font, 0.40, (180, 180, 180), 1, cv2.LINE_AA)
     cv2.putText(frame, str(counted_now), (x2 + 20, box_y + 45), font, 0.80, (0, 255, 0), 2, cv2.LINE_AA)
 
     # REMAINING Box
-    x3 = x2 + box_w + gap
+    x3 = x2 + box_w + gap_ui
     cv2.rectangle(frame, (x3, box_y), (x3 + box_w + 15, box_y + box_h), (50, 50, 50), -1)
     cv2.rectangle(frame, (x3, box_y), (x3 + box_w + 15, box_y + box_h), (100, 100, 100), 1)
     cv2.putText(frame, "REMAINING", (x3 + 2, box_y + 18), font, 0.36, (180, 180, 180), 1, cv2.LINE_AA)
@@ -210,11 +219,13 @@ while cap.isOpened():
 
     # BOTTOM LEFT PANEL
     panel_w, panel_h, panel_x, panel_y = 420, 120, 20, H - 140
+    # Keep it at bottom regardless of height, but make sure it doesn't clip
+    if panel_y < 0: panel_y = H - 50
     cv2.rectangle(frame, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (0, 0, 0), -1)
     cv2.rectangle(frame, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (255, 255, 255), 2)
 
     red_crossed_count = sum(1 for state in track_state.values() if state in ['crossed_red', 'counted'])
-    blue_crossed_count = len(counted_ids)
+    blue_crossed_count = sum(1 for state in track_state.values() if state in ['crossed_blue', 'counted'])
 
     cv2.putText(frame, f"LINE 1 (RED) : {red_crossed_count}", (panel_x + 20, panel_y + 35), font, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
     cv2.putText(frame, f"LINE 2 (BLUE): {blue_crossed_count}", (panel_x + 20, panel_y + 65), font, 0.7, (255, 0, 0), 2, cv2.LINE_AA)
