@@ -1,0 +1,9 @@
+.venv/
+input/
+output/
+*.pt
+.DS_Store
+__pycache__/
+*.mp4
+runs/
+
