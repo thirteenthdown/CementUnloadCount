@@ -13,6 +13,7 @@ import json
 # ──────────────────────────────────────────────
 parser = argparse.ArgumentParser()
 parser.add_argument('--input', type=str, default='input/cement_v1.mp4', help='Path to input video')
+parser.add_argument('--recalibrate', action='store_true', help='Force redrawing the line by ignoring saved config')
 args = parser.parse_args()
 
 VIDEO_IN = args.input
@@ -45,7 +46,7 @@ if not ret: sys.exit("ERROR: Could not read first frame.")
 # ================================================================
 line_pts = []
 
-if os.path.exists(CONFIG_PATH):
+if os.path.exists(CONFIG_PATH) and not args.recalibrate:
     print(f"\n[PHASE 1] Loading saved line configuration from {CONFIG_PATH}...")
     with open(CONFIG_PATH, 'r') as f:
         line_pts = json.load(f)
