@@ -127,7 +127,7 @@ box_annotator = sv.BoxAnnotator(color=sv.Color(0, 255, 0), thickness=2)
 track_state = {}
 counted_ids = set()
 frame_num = 0
-MAX_BBOX_AREA = W * H * 0.15
+MAX_BBOX_AREA = W * H * 0.80
 
 while cap.isOpened():
     ret, frame = cap.read()
