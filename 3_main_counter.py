@@ -108,6 +108,11 @@ else:
 A = np.array(line_pts[0], dtype=float)
 B = np.array(line_pts[1], dtype=float)
 
+if np.linalg.norm(B - A) < 10:
+    if os.path.exists(CONFIG_PATH):
+        os.remove(CONFIG_PATH)
+    sys.exit(f"ERROR: The loaded line is too short! Corrupted config {CONFIG_PATH} has been deleted. Please re-run the script and drag to draw a new line.")
+
 # Vector along the drawn line
 u = (B - A)
 u = u / np.linalg.norm(u)
