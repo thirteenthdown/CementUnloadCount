@@ -51,20 +51,35 @@ if os.path.exists(CONFIG_PATH):
         line_pts = json.load(f)
 else:
     print("\n[PHASE 1] Interactive Line Calibration...")
-    print("  -> A window will open. CLICK TWICE to draw a line across the corridor.")
+    print("  -> A window will open. CLICK AND DRAG to draw a line across the corridor.")
     print("  -> Press ENTER to confirm and save.")
     
     clone = first_frame.copy()
+    drawing = False
+    temp_pt1 = None
+    temp_pt2 = None
     
     def draw_line(event, x, y, flags, param):
-        global line_pts
+        global line_pts, drawing, temp_pt1, temp_pt2
         if event == cv2.EVENT_LBUTTONDOWN:
-            if len(line_pts) < 2:
-                line_pts.append((x, y))
-                cv2.circle(clone, (x, y), 5, (0, 255, 255), -1)
-                if len(line_pts) == 2:
-                    cv2.line(clone, line_pts[0], line_pts[1], (0, 255, 0), 2)
-                cv2.imshow("Calibration", clone)
+            drawing = True
+            temp_pt1 = (x, y)
+            temp_pt2 = (x, y)
+            
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if drawing:
+                temp_pt2 = (x, y)
+                temp_clone = clone.copy()
+                cv2.line(temp_clone, temp_pt1, temp_pt2, (0, 255, 0), 2)
+                cv2.imshow("Calibration", temp_clone)
+                
+        elif event == cv2.EVENT_LBUTTONUP:
+            drawing = False
+            temp_pt2 = (x, y)
+            line_pts = [temp_pt1, temp_pt2]
+            temp_clone = clone.copy()
+            cv2.line(temp_clone, temp_pt1, temp_pt2, (0, 255, 0), 2)
+            cv2.imshow("Calibration", temp_clone)
 
     cv2.imshow("Calibration", clone)
     cv2.setMouseCallback("Calibration", draw_line)
@@ -73,9 +88,16 @@ else:
         key = cv2.waitKey(1) & 0xFF
         if key == 13: # ENTER key
             if len(line_pts) == 2:
-                break
+                # Validate line isn't too small (prevents NaN error)
+                dist = np.linalg.norm(np.array(line_pts[1]) - np.array(line_pts[0]))
+                if dist < 10:
+                    print("  ⚠ Line is too short! Please click and drag to draw a longer line.")
+                    line_pts = [] # Reset
+                    cv2.imshow("Calibration", clone)
+                else:
+                    break
             else:
-                print("  ⚠ Please click twice to draw the line first!")
+                print("  ⚠ Please click and drag to draw the line first!")
     cv2.destroyAllWindows()
     
     with open(CONFIG_PATH, 'w') as f:
