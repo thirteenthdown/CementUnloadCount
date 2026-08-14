@@ -225,39 +225,11 @@ while cap.isOpened():
     box_w, box_h, box_y, gap_ui = 85, 55, 10, 8
     font = cv2.FONT_HERSHEY_SIMPLEX
 
-    # TARGET Box
+    # COUNTED Box
     cv2.rectangle(frame, (10, box_y), (10 + box_w, box_y + box_h), (50, 50, 50), -1)
     cv2.rectangle(frame, (10, box_y), (10 + box_w, box_y + box_h), (100, 100, 100), 1)
-    cv2.putText(frame, "TARGET", (20, box_y + 18), font, 0.40, (180, 180, 180), 1, cv2.LINE_AA)
-    cv2.putText(frame, str(TARGET_COUNT), (30, box_y + 45), font, 0.80, (255, 255, 255), 2, cv2.LINE_AA)
-
-    # COUNTED Box
-    x2 = 10 + box_w + gap_ui
-    cv2.rectangle(frame, (x2, box_y), (x2 + box_w, box_y + box_h), (50, 50, 50), -1)
-    cv2.rectangle(frame, (x2, box_y), (x2 + box_w, box_y + box_h), (100, 100, 100), 1)
-    cv2.putText(frame, "COUNTED", (x2 + 5, box_y + 18), font, 0.40, (180, 180, 180), 1, cv2.LINE_AA)
-    cv2.putText(frame, str(counted_now), (x2 + 20, box_y + 45), font, 0.80, (0, 255, 0), 2, cv2.LINE_AA)
-
-    # REMAINING Box
-    x3 = x2 + box_w + gap_ui
-    cv2.rectangle(frame, (x3, box_y), (x3 + box_w + 15, box_y + box_h), (50, 50, 50), -1)
-    cv2.rectangle(frame, (x3, box_y), (x3 + box_w + 15, box_y + box_h), (100, 100, 100), 1)
-    cv2.putText(frame, "REMAINING", (x3 + 2, box_y + 18), font, 0.36, (180, 180, 180), 1, cv2.LINE_AA)
-    cv2.putText(frame, str(remaining), (x3 + 25, box_y + 45), font, 0.80, (0, 165, 255), 2, cv2.LINE_AA)
-
-    # BOTTOM LEFT PANEL
-    panel_w, panel_h, panel_x, panel_y = 420, 120, 20, H - 140
-    # Keep it at bottom regardless of height, but make sure it doesn't clip
-    if panel_y < 0: panel_y = H - 50
-    cv2.rectangle(frame, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (0, 0, 0), -1)
-    cv2.rectangle(frame, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (255, 255, 255), 2)
-
-    red_crossed_count = sum(1 for state in track_state.values() if state in ['crossed_red', 'counted'])
-    blue_crossed_count = sum(1 for state in track_state.values() if state in ['crossed_blue', 'counted'])
-
-    cv2.putText(frame, f"LINE 1 (RED) : {red_crossed_count}", (panel_x + 20, panel_y + 35), font, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
-    cv2.putText(frame, f"LINE 2 (BLUE): {blue_crossed_count}", (panel_x + 20, panel_y + 65), font, 0.7, (255, 0, 0), 2, cv2.LINE_AA)
-    cv2.putText(frame, f"TARGET: {TARGET_COUNT}", (panel_x + 20, panel_y + 105), font, 0.75, (0, 255, 0), 2, cv2.LINE_AA)
+    cv2.putText(frame, "COUNTED", (15, box_y + 18), font, 0.40, (180, 180, 180), 1, cv2.LINE_AA)
+    cv2.putText(frame, str(counted_now), (30, box_y + 45), font, 0.80, (0, 255, 0), 2, cv2.LINE_AA)
 
     writer.write(frame)
     if frame_num % 100 == 0:
